@@ -1,0 +1,31 @@
+{
+	"name": "http_csv_DS",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "Http_LS",
+			"type": "LinkedServiceReference"
+		},
+		"parameters": {
+			"fileName": {
+				"type": "string"
+			}
+		},
+		"annotations": [],
+		"type": "DelimitedText",
+		"typeProperties": {
+			"location": {
+				"type": "HttpServerLocation",
+				"relativeUrl": {
+					"value": "anshlambagit/Azure-DE-Project-Resources/refs/heads/main/Raw%20Data/@{dataset().fileName}",
+					"type": "Expression"
+				}
+			},
+			"columnDelimiter": ",",
+			"escapeChar": "\\",
+			"firstRowAsHeader": true,
+			"quoteChar": "\""
+		},
+		"schema": []
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}

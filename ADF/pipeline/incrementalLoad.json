@@ -1,0 +1,400 @@
+{
+	"name": "incrementalLoad",
+	"properties": {
+		"activities": [
+			{
+				"name": "HighwaterMark Lastupdate",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderQuery": "select DateID from dbo.highWaterMark where tableName = 'carSales'",
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"dataset": {
+						"referenceName": "AzureSql_DS",
+						"type": "DatasetReference",
+						"parameters": {
+							"schemaName": "dbo",
+							"tableName": "highWaterMark"
+						}
+					}
+				}
+			},
+			{
+				"name": "currentDate",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderQuery": "select max(Date_ID) as currentDate from dbo.carSales",
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"dataset": {
+						"referenceName": "AzureSql_DS",
+						"type": "DatasetReference",
+						"parameters": {
+							"schemaName": "dbo",
+							"tableName": "carSales"
+						}
+					}
+				}
+			},
+			{
+				"name": "Copy carsales to bronze",
+				"type": "Copy",
+				"dependsOn": [
+					{
+						"activity": "Set folderPath",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderQuery": {
+							"value": "select * from dbo.carSales where Date_ID > '@{activity('HighwaterMark Lastupdate').output.firstRow.DateID}' and Date_ID <= '@{activity('currentDate').output.firstRow.currentDate}'",
+							"type": "Expression"
+						},
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"sink": {
+						"type": "ParquetSink",
+						"storeSettings": {
+							"type": "AzureBlobFSWriteSettings"
+						},
+						"formatSettings": {
+							"type": "ParquetWriteSettings"
+						}
+					},
+					"enableStaging": false,
+					"translator": {
+						"type": "TabularTranslator",
+						"typeConversion": true,
+						"typeConversionSettings": {
+							"allowDataTruncation": true,
+							"treatBooleanAsNumber": false
+						}
+					}
+				},
+				"inputs": [
+					{
+						"referenceName": "AzureSql_DS",
+						"type": "DatasetReference",
+						"parameters": {
+							"schemaName": "dbo",
+							"tableName": "carSales"
+						}
+					}
+				],
+				"outputs": [
+					{
+						"referenceName": "ADLS_bronze_parquet",
+						"type": "DatasetReference",
+						"parameters": {
+							"folderName": {
+								"value": "@variables('folderPath')",
+								"type": "Expression"
+							}
+						}
+					}
+				]
+			},
+			{
+				"name": "update HighWaterMark",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "Copy carsales to bronze",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "[dbo].[updateHighWaterMark]",
+					"storedProcedureParameters": {
+						"lastUploaded": {
+							"value": {
+								"value": "@activity('currentDate').output.firstRow.currentDate",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"tableName": {
+							"value": "carSales",
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureSql_LS",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "Silver",
+				"type": "DatabricksNotebook",
+				"dependsOn": [
+					{
+						"activity": "update HighWaterMark",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/Repos/4614dan@gmail.com/autosphere-databricks/silver",
+					"baseParameters": {
+						"folderPath": {
+							"value": "@concat('abfss://bronze@adlscarsales.dfs.core.windows.net/',variables('folderPath'))",
+							"type": "Expression"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureDatabricks_LS",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "dim_model_gold",
+				"type": "DatabricksNotebook",
+				"dependsOn": [
+					{
+						"activity": "Silver",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/Repos/4614dan@gmail.com/autosphere-databricks/gold/dim_model_gold"
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureDatabricks_LS",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "dim_dealer",
+				"type": "DatabricksNotebook",
+				"dependsOn": [
+					{
+						"activity": "Silver",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/Repos/4614dan@gmail.com/autosphere-databricks/gold/dim_dealer_gold"
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureDatabricks_LS",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "dim_branch",
+				"type": "DatabricksNotebook",
+				"dependsOn": [
+					{
+						"activity": "Silver",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/Repos/4614dan@gmail.com/autosphere-databricks/gold/dim_branch_gold"
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureDatabricks_LS",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "dim_date",
+				"type": "DatabricksNotebook",
+				"dependsOn": [
+					{
+						"activity": "Silver",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/Repos/4614dan@gmail.com/autosphere-databricks/gold/dim_date_gold"
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureDatabricks_LS",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "fact_sales",
+				"type": "DatabricksNotebook",
+				"dependsOn": [
+					{
+						"activity": "dim_model_gold",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					},
+					{
+						"activity": "dim_dealer",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					},
+					{
+						"activity": "dim_branch",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					},
+					{
+						"activity": "dim_date",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebookPath": "/Repos/4614dan@gmail.com/autosphere-databricks/gold/fact_gold"
+				},
+				"linkedServiceName": {
+					"referenceName": "AzureDatabricks_LS",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "Set folderPath",
+				"type": "SetVariable",
+				"dependsOn": [
+					{
+						"activity": "HighwaterMark Lastupdate",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					},
+					{
+						"activity": "currentDate",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"variableName": "folderPath",
+					"value": {
+						"value": "@concat(\n'rawData/',\nformatDateTime(utcNow(),'yyyy/MM/dd/HHmmss/')\n)",
+						"type": "Expression"
+					}
+				}
+			}
+		],
+		"variables": {
+			"folderPath": {
+				"type": "String"
+			}
+		},
+		"annotations": [],
+		"lastPublishTime": "2026-05-19T12:01:45Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

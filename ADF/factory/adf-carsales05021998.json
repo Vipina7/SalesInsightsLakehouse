@@ -1,0 +1,15 @@
+{
+	"name": "adf-carsales05021998",
+	"properties": {
+		"trustModeClaimForMi": {
+			"value": "Enabled",
+			"editable": true
+		}
+	},
+	"location": "eastus",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "3d890445-4c33-4183-8e8d-8b6789c18ba1",
+		"tenantId": "a5bbfc79-7688-407c-b4a8-24cf2c1999f9"
+	}
+}
